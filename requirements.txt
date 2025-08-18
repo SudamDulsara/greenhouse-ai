@@ -1,0 +1,14 @@
+openai>=1.40
+langchain>=0.2
+langchain-community>=0.2
+pydantic>=2.7
+tenacity>=8.2
+streamlit>=1.35
+pandas>=2.2
+plotly>=5.22
+faiss-cpu>=1.8
+tiktoken>=0.7
+python-dotenv>=1.0
+sqlmodel>=0.0.21
+ruff>=0.4.4
+mypy>=1.10
