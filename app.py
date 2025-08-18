@@ -2,16 +2,79 @@ import json
 from copy import deepcopy
 import pandas as pd
 import streamlit as st
+
 from orchestrator.workflow import run as run_workflow
 from storage.db import init_db, save_scenario, list_scenarios, load_scenario, delete_scenario
 from services.weather import get_weather_summary
 from services.report import build_pdf
 from services.forex import get_rate, SUPPORTED as FX_SUPPORTED
+from config import settings
+from services.auth0 import build_login_url, build_logout_url, exchange_code_for_tokens, verify_id_token, new_state
+
 
 st.set_page_config(page_title="GreenHouseAI Manager", page_icon="🌱", layout="wide")
 st.title("🌱 GreenHouseAI Manager (MVP+)")
 
 init_db()
+
+def redirect_now(url: str):
+    st.markdown(
+        f"""<meta http-equiv="refresh" content="0; url={url}">""",
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+qp = st.query_params
+if "code" in qp and "state" in qp and not st.session_state.get("user"):
+    try:
+        # Optional CSRF protection: verify state matches what we issued
+        expected_state = st.session_state.get("auth_state")
+        if expected_state and qp["state"] != expected_state:
+            raise ValueError("state mismatch")
+        tokens = exchange_code_for_tokens(qp["code"])
+        claims = verify_id_token(tokens.get("id_token"))
+        st.session_state["user"] = {
+            "sub": claims.get("sub"),
+            "email": claims.get("email"),
+            "name": claims.get("name") or claims.get("nickname") or "User",
+        }
+        # Clean the URL bar and continue in the same tab
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Login failed: {e}")
+
+# 2) If not authenticated, show a button that redirects THIS tab to Auth0
+if not st.session_state.get("user"):
+    st.info("Please log in to continue.")
+    if st.button("🔐 Login with Auth0", use_container_width=True):
+        state = new_state()
+        st.session_state["auth_state"] = state
+        login_url = build_login_url(state)
+        redirect_now(login_url)  # <-- same-tab navigation
+    st.stop()
+
+# 3) Sidebar: show user + single-tab logout
+with st.sidebar:
+    st.markdown(
+        f"**Signed in as:** {st.session_state['user'].get('name','User')}  \n"
+        f"{st.session_state['user'].get('email','')}"
+    )
+    if st.button("Logout", use_container_width=True):
+        # clear local session first
+        for k in ["user", "workspace_id", "results", "inputs", "auth_state"]:
+            st.session_state.pop(k, None)
+        # redirect current tab to Auth0 logout; it will bounce back to REDIRECT_URI
+        redirect_now(build_logout_url())
+with st.sidebar:
+    st.divider()
+    default_ws = st.session_state.get("workspace_id", st.session_state["user"]["sub"][:8])
+    workspace_id = st.text_input("Workspace ID", value=default_ws, help="Separate data by workspace (e.g., org/client).")
+    if st.button("Switch workspace", use_container_width=True):
+        st.session_state["workspace_id"] = workspace_id.strip() or "default"
+        st.success(f"Active workspace: {st.session_state['workspace_id']}")
+workspace = st.session_state.get("workspace_id", st.session_state["user"]["sub"][:8])
+
 
 # ---------- Sidebar ----------
 with st.sidebar:
