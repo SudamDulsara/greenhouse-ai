@@ -1,7 +1,9 @@
+# agents/market_analyst.py
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List
 import pandas as pd
-from services.llm import chat_json
+from services.llm import chat_json_with_usage
+from config import settings
 
 class PricingAssumption(BaseModel):
     crop: str
@@ -24,11 +26,18 @@ def _load_prices() -> pd.DataFrame:
     df.columns = [c.strip().lower() for c in df.columns]
     return df
 
-def analyze_market(ops_plan, pricing_source: str = "csv") -> MarketPlan:
-    prices_df = _load_prices()
+def analyze_market(ops_plan, pricing_source: str = "csv", pricing_df: pd.DataFrame | None = None) -> MarketPlan:
+    if pricing_df is not None:
+        df = pricing_df.copy()
+        df.columns = [c.strip().lower() for c in df.columns]
+    else:
+        df = _load_prices()
+
+    # Expect columns: crop, price_usd_per_kg
     price_map = {}
-    for _, row in prices_df.iterrows():
-        price_map[row["crop"].strip().lower()] = float(row["price_usd_per_kg"])
+    for _, row in df.iterrows():
+        if "crop" in row and "price_usd_per_kg" in row:
+            price_map[str(row["crop"]).strip().lower()] = float(row["price_usd_per_kg"])
 
     pricing_assumptions: List[PricingAssumption] = []
     revenue = 0.0
@@ -45,17 +54,17 @@ def analyze_market(ops_plan, pricing_source: str = "csv") -> MarketPlan:
     items = []
     try:
         user_prompt = f"""
-            Crops and expected yields:
-            {[(c.name, c.expected_yield_kg) for c in ops_plan.crops]}
+Crops and expected yields:
+{[(c.name, c.expected_yield_kg) for c in ops_plan.crops]}
 
-            Constraints:
-            - Audience: retail and small HORECA (cafes, restaurants).
-            - Keep suggestions crisp and actionable.
-            - 2–3 ideas max.
-            Return JSON with key go_to_market: ["idea1", "idea2", ...]
-            """
-        ideas = chat_json(
-            model="gpt-4o-mini",
+Constraints:
+- Audience: retail and small HORECA (cafes, restaurants).
+- Keep suggestions crisp and actionable.
+- 2–3 ideas max.
+Return JSON with key go_to_market: ["idea1", "idea2", ...]
+"""
+        ideas, usage, elapsed = chat_json_with_usage(
+            model=settings.model_small,
             system=SYSTEM_PROMPT,
             user=user_prompt,
         )
