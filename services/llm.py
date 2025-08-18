@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from config import settings
 
 load_dotenv()
-
 _client = None
 
 def get_client() -> OpenAI:
@@ -24,13 +23,12 @@ def get_client() -> OpenAI:
     retry=retry_if_exception_type(Exception),
 )
 def chat_json(model: str, system: str, user: str) -> dict:
-    """Back-compat function: returns only the parsed JSON content."""
-    data, _usage, _elapsed = chat_json_with_usage(model, system, user)
+    data, _, _ = chat_json_with_usage(model, system, user)
     return data
 
 def chat_json_with_usage(model: str, system: str, user: str):
     """
-    Returns (data: dict, usage: dict|None, elapsed_s: float).
+    Returns (data: dict, usage: dict|None, elapsed_s: float)
     """
     client = get_client()
     t0 = time.time()
@@ -38,8 +36,10 @@ def chat_json_with_usage(model: str, system: str, user: str):
         model=model,
         temperature=0.4,
         response_format={"type": "json_object"},
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": user}],
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
     )
     elapsed = time.time() - t0
     content = resp.choices[0].message.content

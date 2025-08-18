@@ -1,3 +1,4 @@
+# agents/ops_optimizer.py
 from pydantic import BaseModel
 from typing import List, Dict
 import pandas as pd
@@ -10,9 +11,10 @@ class OpsCrop(BaseModel):
 
 class OpsPlan(BaseModel):
     crops: List[OpsCrop]
-    costs: Dict[str, float]
+    costs: Dict[str, float]  # water_usd, nutrients_usd, labor_usd, misc_usd
     notes: str = ""
 
+# Simple per-m2 heuristics (can tune later)
 WATER_L_PER_M2_DAY_DEFAULTS = {
     "tomato": 3.0,
     "basil": 1.2,
@@ -26,26 +28,30 @@ FERT_G_PER_M2_WEEK_DEFAULTS = {
     "lettuce": 15.0,
 }
 
-WATER_PRICE_PER_L = 0.0010  
-NUTRIENT_PRICE_PER_G = 0.01 
-LABOR_COST_BASE = 120.0     
-MISC_COST = 25.0            
+WATER_PRICE_PER_L = 0.0010  # USD
+NUTRIENT_PRICE_PER_G = 0.01 # USD
+LABOR_COST_BASE = 120.0     # USD per cycle, simple flat assumption
+MISC_COST = 25.0            # USD
 
 def _load_catalog() -> pd.DataFrame:
     df = pd.read_csv("data/crops.csv")
     df.columns = [c.strip().lower() for c in df.columns]
     return df
 
-def optimize_operations(crop_plan, user_prefs: dict) -> OpsPlan:
+def optimize_operations(crop_plan, user_prefs: dict, weather: dict | None = None) -> OpsPlan:
     """
     Compute watering, fertilizer, expected yield using crop catalog yields and area.
-    Costs computed from simple unit prices and 10-week horizon.
+    Costs computed from simple unit prices and ~10-week horizon.
+    If weather provided, adjust water by temperature deviation from 22°C baseline.
     """
     catalog = _load_catalog()
     cat_map = {row["crop"].strip().lower(): row for _, row in catalog.iterrows()}
 
     goal = user_prefs.get("goal", "balanced")
     organic = bool(user_prefs.get("organic", True))
+
+    temp = (weather or {}).get("avg_temp_c", 22.0)
+    temp_factor = 1.0 + max(min((temp - 22.0) / 5.0 * 0.10, 0.30), -0.30)
 
     crops_out: List[OpsCrop] = []
     total_water_cost = 0.0
@@ -75,6 +81,8 @@ def optimize_operations(crop_plan, user_prefs: dict) -> OpsPlan:
         if organic:
             fert_per_m2_week *= 0.9
 
+        water_per_m2_day *= temp_factor
+
         water_l_day = round(water_per_m2_day * area, 2)
         fert_g_week = round(fert_per_m2_week * area, 2)
 
@@ -97,5 +105,5 @@ def optimize_operations(crop_plan, user_prefs: dict) -> OpsPlan:
         "misc_usd": round(MISC_COST, 2),
     }
 
-    notes = "Parameters tuned for a ~10-week horizon. Adjust goals to shift water/fertilizer intensity."
+    notes = "Parameters tuned for a ~10-week horizon. Weather-adjusted watering applied."
     return OpsPlan(crops=crops_out, costs=costs, notes=notes)
